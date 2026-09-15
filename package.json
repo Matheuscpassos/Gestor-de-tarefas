@@ -1,0 +1,20 @@
+{
+  "name": "gestor-tarefas-devops",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Gerenciador de tarefas — projeto da disciplina Integração DevOps (CEUB, 2026_2)",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "node --watch src/app.js",
+    "test": "jest --runInBand"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^7.0.0"
+  }
+}
