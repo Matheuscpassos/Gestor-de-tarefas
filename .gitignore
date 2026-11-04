@@ -5,3 +5,7 @@ data.sqlite3-wal
 npm-debug.log*
 .DS_Store
 coverage/
+# Segredos locais — nunca versionar
+.env
+.env.*
+!.env.example
