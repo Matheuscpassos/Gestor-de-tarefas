@@ -1,0 +1,40 @@
+# Orquestração local/homologação do Gestor de Tarefas (A2).
+#
+# Subir (build local):      docker compose up --build -d
+# Subir imagem do registry: IMAGE=ghcr.io/<usuario>/<repo> IMAGE_TAG=1.0.0 docker compose up -d
+# Derrubar:                 docker compose down        (mantém os dados)
+# Derrubar e apagar dados:  docker compose down -v
+#
+# Variáveis vêm do ambiente ou de um arquivo .env (NÃO versionado).
+# Use .env.example como modelo.
+services:
+  app:
+    image: ${IMAGE:-gestor-tarefas-devops}:${IMAGE_TAG:-local}
+    build:
+      context: .
+      args:
+        APP_VERSION: ${IMAGE_TAG:-local}
+    container_name: gestor-tarefas
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    environment:
+      PORT: "3000"
+      DB_PATH: /data/data.sqlite3
+      APP_VERSION: ${IMAGE_TAG:-local}
+      APP_ENV: ${APP_ENV:-local}
+      # Segredo de exemplo: o valor real vem do .env (local) ou dos
+      # Secrets do GitHub (CI/CD). Nunca fica escrito no repositório.
+      APP_SECRET: ${APP_SECRET:?defina APP_SECRET no .env (veja .env.example)}
+    volumes:
+      # Banco SQLite persistente: sobrevive a "docker compose down/up"
+      - tasks-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  tasks-data:
