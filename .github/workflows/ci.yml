@@ -1,12 +1,23 @@
-name: CI
+name: CI/CD
 
+# CI  : roda em PRs e pushes na main (testes + build da imagem + teste do compose)
+# CD  : em push na main ou em tag vX.Y.Z → publica a imagem no GHCR e faz
+#       deploy automático no ambiente de homologação (staging, simulado)
+# Tag : vX.Y.Z → imagem com versão semântica + GitHub Release
 on:
   push:
     branches: [main]
+    tags: ["v*.*.*"]
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
+  # ------------------------------------------------------------------
+  # CI (A1)
+  # ------------------------------------------------------------------
   test:
     name: Build e testes automatizados
     runs-on: ubuntu-latest
@@ -26,13 +37,180 @@ jobs:
       - name: Rodar suíte de testes
         run: npm test
 
+  # ------------------------------------------------------------------
+  # Valida Dockerfile + docker-compose (A2) — sem publicar nada
+  # ------------------------------------------------------------------
   docker:
-    name: Build da imagem Docker
+    name: Build da imagem e teste do Compose
     needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Baixar código
         uses: actions/checkout@v4
 
-      - name: Build da imagem (conteinerização inicial)
-        run: docker build -t gestor-tarefas-devops:${{ github.sha }} .
+      - name: Subir a stack com Docker Compose (build local)
+        env:
+          IMAGE_TAG: ci-${{ github.run_number }}
+        run: |
+          # Segredo descartável gerado em runtime: nada fixo no código.
+          export APP_SECRET="$(openssl rand -hex 16)"
+          docker compose up --build -d
+
+      - name: Smoke test
+        run: bash scripts/smoke-test.sh http://localhost:3000 "ci-${{ github.run_number }}"
+
+      - name: Logs do contêiner (em caso de falha)
+        if: failure()
+        env:
+          IMAGE_TAG: ci-${{ github.run_number }}
+          APP_SECRET: placeholder
+        run: docker compose logs
+
+      - name: Derrubar a stack
+        if: always()
+        env:
+          IMAGE_TAG: ci-${{ github.run_number }}
+          APP_SECRET: placeholder
+        run: docker compose down -v
+
+  # ------------------------------------------------------------------
+  # CD (A2) — publica a imagem no GitHub Container Registry
+  # ------------------------------------------------------------------
+  publish:
+    name: Publicar imagem no GHCR
+    needs: [test, docker]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Baixar código
+        uses: actions/checkout@v4
+
+      - name: Definir nome da imagem e versão
+        id: meta
+        run: |
+          # GHCR exige nome em minúsculas
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"          # tag v1.2.0 → 1.2.0
+          else
+            VERSION="sha-${GITHUB_SHA::7}"          # main → sha-abc1234
+          fi
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Configurar Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login no GHCR (usa o token automático, sem senha no código)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Gerar tags da imagem
+        id: tags
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.meta.outputs.image }}
+          tags: |
+            type=raw,value=${{ steps.meta.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build e push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: ${{ steps.tags.outputs.labels }}
+          build-args: |
+            APP_VERSION=${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ------------------------------------------------------------------
+  # CD (A2) — deploy automático em homologação (ambiente simulado)
+  # ------------------------------------------------------------------
+  deploy-staging:
+    name: Deploy em homologação (staging)
+    needs: publish
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Baixar código
+        uses: actions/checkout@v4
+
+      - name: Login no GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Deploy (docker compose com a imagem publicada)
+        env:
+          IMAGE: ${{ needs.publish.outputs.image }}
+          IMAGE_TAG: ${{ needs.publish.outputs.version }}
+          APP_ENV: staging
+          # Segredo do ambiente "staging" — cadastrado no GitHub, nunca no código
+          APP_SECRET: ${{ secrets.APP_SECRET }}
+        run: |
+          docker compose pull
+          docker compose up -d --no-build
+
+      - name: Smoke test (confere a versão publicada)
+        run: bash scripts/smoke-test.sh http://localhost:3000 "${{ needs.publish.outputs.version }}"
+
+      - name: Logs do contêiner (em caso de falha)
+        if: failure()
+        env:
+          IMAGE: ${{ needs.publish.outputs.image }}
+          IMAGE_TAG: ${{ needs.publish.outputs.version }}
+          APP_SECRET: placeholder
+        run: docker compose logs
+
+      - name: Resumo do deploy
+        if: success()
+        run: |
+          {
+            echo "### ✅ Deploy em staging concluído"
+            echo "- Imagem: \`${{ needs.publish.outputs.image }}:${{ needs.publish.outputs.version }}\`"
+            echo "- Commit: \`${GITHUB_SHA::7}\`"
+            echo "- Para voltar a uma versão anterior: workflow **Rollback**"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ------------------------------------------------------------------
+  # Release (A2) — só em tags vX.Y.Z, depois do deploy OK
+  # ------------------------------------------------------------------
+  release:
+    name: GitHub Release
+    needs: deploy-staging
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Baixar código
+        uses: actions/checkout@v4
+
+      - name: Criar release com notas automáticas
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+             if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+               echo "Release já existe, nada a fazer."
+             else
+               gh release create "$GITHUB_REF_NAME" --generate-notes --title "$GITHUB_REF_NAME"
+             fi
