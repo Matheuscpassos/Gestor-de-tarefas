@@ -57,7 +57,7 @@ bash scripts/smoke-test.sh http://localhost:3000 1.0.0
 | Data/hora do deploy da v1.1.1 | 04/11 8:47 |
 | Data/hora do rollback | 04/11 8:49 |
 | Tempo até restaurar (RTO simulado) | 13 s |
-| Link do run do Rollback | [<preencher>](https://github.com/Matheuscpassos/Gestor-de-tarefas/actions/runs/41823872586) |
+| Link do run do Rollback | https://github.com/Matheuscpassos/Gestor-de-tarefas/actions/runs/41823872586 |
 | Causa raiz e correção | O endpoint da listagem no front-end foi alterado para `/api/task`, rota inexistente. Os testes de backend e o health check não cobrem essa chamada, então o deploy passou verde. Correção: `fetch` revertido para `/api/tasks` (v1.1.2). |
 
 ### Lição aprendida
