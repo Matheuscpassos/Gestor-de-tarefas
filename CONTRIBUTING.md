@@ -73,3 +73,21 @@ npm install
 npm test
 npm run dev   # sobe o servidor em http://localhost:3000
 ```
+## Versionamento e releases (A2)
+
+Seguimos [SemVer](https://semver.org/lang/pt-BR/): `MAJOR.MINOR.PATCH`.
+
+- `PATCH` — correção de bug sem mudar a API (`1.0.0` → `1.0.1`)
+- `MINOR` — funcionalidade nova compatível (`1.0.1` → `1.1.0`)
+- `MAJOR` — mudança que quebra compatibilidade (`1.1.0` → `2.0.0`)
+
+Para lançar uma versão, com a `main` estável e o CI verde:
+
+```bash
+git checkout main && git pull
+git tag -a v1.1.0 -m "Release 1.1.0"
+git push origin v1.1.0
+```
+
+O pipeline publica a imagem com a tag `1.1.0`, faz o deploy em staging e cria a
+GitHub Release. Para voltar atrás, use o workflow **Rollback** (`docs/ROLLBACK.md`).
