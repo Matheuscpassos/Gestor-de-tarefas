@@ -3,7 +3,7 @@ const input = document.getElementById("task-title");
 const list = document.getElementById("task-list");
 
 async function loadTasks() {
-  const res = await fetch("/api/tasks");
+  const res = await fetch("/api/task");
   const tasks = await res.json();
   renderTasks(tasks);
 }
